@@ -27,10 +27,12 @@
 #define N 1000
 
 
-double targetpackfrac = 0.58; //Target packing fraction (if too high, simulation will not finish or crash)  
-double composition = 0.3;     //Fraction of large particles
-double sizeratio = 0.85;      //small diameter / large diameter (must be <= 1)
-double growthspeed = 0.1;     //Factor determining growth speed (slower growth means higher packing fractions can be reached)
+double targetpackfrac = 0.47;   //Target packing fraction (if too high, simulation will not finish or crash)  
+double composition1 = 0.7;      //Fraction of large particles
+double composition2 = 0.2;      //Fraction of intermediate particles (must be <= 1 - composition1, < for ternary systems)
+double sizeratio2 = 0.9375;     //intermediate diameter / large diameter (must be <= 1)
+double sizeratio3 = 0.9292;     //small diameter / large diameter (must be <= sizeratio2)
+double growthspeed = 0.2;       //Factor determining growth speed (slower growth means higher packing fractions can be reached)
 double thermostatinterval = 0.001;  //Time between applications of thermostat, which gets rid of excess heat generated while growing
 
 int makesnapshots = 0;        //Whether to make snapshots during the run (yes = 1, no = 0)
@@ -225,9 +227,11 @@ int mygetline(char* str, FILE* f)
 **************************************************/
 void randomparticles()
 {
-    double x = composition;
-    double alpha = sizeratio;
-    double vol = N * M_PI / 6 * (x + (1 - x) * alpha * alpha * alpha) / targetpackfrac;
+    double x1 = composition1;
+    double x2 = composition2;
+    double alpha = sizeratio2;
+    double beta = sizeratio3;
+    double vol = N * M_PI / 6 * (x1 + x2 * alpha * alpha * alpha + (1 - x1 -x2) * beta * beta *beta) / targetpackfrac;
 
     printf("Volume: %lf\n", vol);
 
@@ -245,12 +249,18 @@ void randomparticles()
     {
         p = &(particles[i]);
         p->rtarget = 1;
-        if (i >= x * N - 0.00000001) p->rtarget = alpha;
+        if (i >= x1 * N - 0.00000001)
+        {
+                p->rtarget = alpha;
+                if (i >= (x1 + x2) * N - 0.00000001)
+                        p->rtarget = beta;
+        }
         p->rtarget *= 0.5;
         p->r = 0.5 * p->rtarget;
         p->mass = 1;
         p->type = 0;
-        if (p->rtarget < 0.5) p->type = 1;
+        if (p->rtarget == alpha * 0.5) p->type = 1;
+        if (p->rtarget == beta * 0.5) p->type = 2;
         p->number = i;
         p->vr = growthspeed * p->r;
         double mt = (p->rtarget - p->r) / p->vr;
