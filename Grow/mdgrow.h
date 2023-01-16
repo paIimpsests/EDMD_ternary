@@ -37,6 +37,7 @@ typedef struct sparticle
 } particle;
 
 int main();
+void parametrization(int argc, char* argv[]);
 void printstuff();
 void init();
 void cubicfcc();

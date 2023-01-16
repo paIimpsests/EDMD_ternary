@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 
 #define MAXNEIGH 24
 
@@ -24,16 +25,18 @@
 //The code is set up for binary mixtures. The parameters below control the number of particles, size ratio, composition, target packing fraction, etc.
 
 //Number of particles:
-#define N 1000
+#define N 2000
 
 
-double targetpackfrac = 0.47;   //Target packing fraction (if too high, simulation will not finish or crash)  
-double composition1 = 0.7;      //Fraction of large particles
-double composition2 = 0.2;      //Fraction of intermediate particles (must be <= 1 - composition1, < for ternary systems)
-double sizeratio2 = 0.9375;     //intermediate diameter / large diameter (must be <= 1)
-double sizeratio3 = 0.9292;     //small diameter / large diameter (must be <= sizeratio2)
-double growthspeed = 0.2;       //Factor determining growth speed (slower growth means higher packing fractions can be reached)
+double targetpackfrac = 0.00f;   //Target packing fraction (if too high, simulation will not finish or crash)  
+double composition1 = 0.0f;      //Fraction of large particles
+double composition2 = 0.0f;      //Fraction of intermediate particles (must be <= 1 - composition1, < for ternary systems)
+double sizeratio2 = 0.0f;     //intermediate diameter / large diameter (must be <= 1)
+double sizeratio3 = 0.0f;     //small diameter / large diameter (must be <= sizeratio2)
+double PD = 0.04f;               // Choice of polydispersity parameter
+double growthspeed = 0.01;       //Factor determining growth speed (slower growth means higher packing fractions can be reached)
 double thermostatinterval = 0.001;  //Time between applications of thermostat, which gets rid of excess heat generated while growing
+char filename[200];             //Name of output file
 
 int makesnapshots = 0;        //Whether to make snapshots during the run (yes = 1, no = 0)
 double writeinterval = 1;     //Time between output to screen / data file
@@ -99,8 +102,10 @@ int usethermostat = 1; //Whether to use a thermostat
 
 
 
-int main()
+int main(int argc, char* argv[])
 {
+    parametrization(argc, argv);
+    //sprintf(filename, "./init_configs/init_test.sph");
     init();
     if (stop) return 1;				//Stop is set to 1 whenever the simulation should stop
     printf("Starting\n");
@@ -111,6 +116,43 @@ int main()
     printstuff();
     return 0;
 }
+
+/**************************************************
+**               PARAMETRIZATION
+** Sets up system parameters from/for I/O
+** Input parameters must be formatted as:
+**      targetpackfrac sizeratio composition1 composition2
+**************************************************/
+void parametrization(int argc, char *argv[])
+{
+        if (argc != 5)
+        {
+                printf("Wrong arguments: could not parametrize!\n");
+                stop = 1;
+                return;
+        }
+
+        // INPUT
+        targetpackfrac = strtod(argv[1], NULL);
+        printf("%lf\n", targetpackfrac);
+        double s = strtod(argv[2], NULL);
+        sizeratio2 = 1.0f - s;
+        sizeratio3 = sizeratio2 * sizeratio2;
+        composition1 = strtod(argv[3], NULL);
+        composition2 = strtod(argv[4], NULL);
+
+        // CHECK
+        printf("N = %d, PF = %lf, sigma2 = %lf, sigma3 = %lf, x1 = %lf, x2 = %lf, x3 = %lf\n", N, targetpackfrac, sizeratio2, sizeratio3, composition1, composition2, 1-composition1-composition2);
+
+        // OUTPUT
+        if (sprintf(filename, "./init_configs/init_N%d_PF_%.2lf_s%.3lf_xA%.2lf_xB%.2lf.sph", N, targetpackfrac, s, composition1, composition2) < 0)
+        {
+                stop = 1;
+                return;
+        }
+}
+
+
 
 /**************************************************
 **                 PRINTSTUFF
@@ -171,8 +213,9 @@ void init()
         p->t = 0;
     }
 
-
+    printf("[grow] Started placing particles.\n");
     randomparticles();
+    printf("[grow] Done placing particles.\n");
     randommovement();
     hx = 0.5 * xsize; hy = 0.5 * ysize; hz = 0.5 * zsize;	//Values used for periodic boundary conditions
 
@@ -227,65 +270,100 @@ int mygetline(char* str, FILE* f)
 **************************************************/
 void randomparticles()
 {
-    double x1 = composition1;
-    double x2 = composition2;
-    double alpha = sizeratio2;
-    double beta = sizeratio3;
-    double vol = N * M_PI / 6 * (x1 + x2 * alpha * alpha * alpha + (1 - x1 -x2) * beta * beta *beta) / targetpackfrac;
-
-    printf("Volume: %lf\n", vol);
-
-    xsize = cbrt(vol);
-    ysize = xsize;
-    zsize = ysize;
-    initcelllist();
-    int i;
-    particle* p;
-    for (i = 0; i < N; i++)				//First put particles at zero
-    {
-        particles[i].x = 0; particles[i].y = 0; particles[i].z = 0;
-    }
-    for (i = 0; i < N; i++)
-    {
-        p = &(particles[i]);
-        p->rtarget = 1;
-        if (i >= x1 * N - 0.00000001)
+        double x1 = composition1;
+        double x2 = composition2;
+        double alpha = sizeratio2;
+        double beta = sizeratio3;
+        double vol = N * M_PI / 6 * (x1 + x2 * alpha * alpha * alpha + (1 - x1 -x2) * beta * beta *beta) / targetpackfrac;
+        double maxrtarget = -1.0f;
+        
+        printf("Volume: %lf\n", vol);
+        
+        xsize = cbrt(vol);
+        ysize = xsize;
+        zsize = ysize;
+        initcelllist();
+        int i;
+        particle* p;
+        for (i = 0; i < N; i++)				//First put particles at zero
         {
-                p->rtarget = alpha;
-                if (i >= (x1 + x2) * N - 0.00000001)
-                        p->rtarget = beta;
+                particles[i].x = 0; particles[i].y = 0; particles[i].z = 0;
         }
-        p->rtarget *= 0.5;
-        p->r = 0.5 * p->rtarget;
-        p->mass = 1;
-        p->type = 0;
-        if (p->rtarget == alpha * 0.5) p->type = 1;
-        if (p->rtarget == beta * 0.5) p->type = 2;
-        p->number = i;
-        p->vr = growthspeed * p->r;
-        double mt = (p->rtarget - p->r) / p->vr;
-        if (mt < 0) printf("Particles should not exceed size 1!\n");
-        if (maxt < 0 || maxt > mt) maxt = mt;
-        do
+        
+        // loops over all N particles
+        for (i = 0; i < N; i++)
         {
-            p->x = genrand_real2() * xsize;			//Random location and speed
-            p->y = genrand_real2() * ysize;
-            p->z = genrand_real2() * zsize;
-            p->cellx = p->x / cxsize;				//Find particle's cell
-            p->celly = p->y / cysize;
-            p->cellz = p->z / czsize;
-        } while (overlaplist(p, 0));
-        double sqm = 1.0 / sqrt(p->mass);
-        p->xn = p->x; p->yn = p->y; p->zn = p->z;
-        p->vx = (genrand_real2() - 0.5) / sqm;
-        p->vy = (genrand_real2() - 0.5) / sqm;
-        p->vz = (genrand_real2() - 0.5) / sqm;
-        p->t = 0;						//r and v known at t=0
-        p->next = celllist[p->cellx][p->celly][p->cellz];	//Add particle to celllist
-        if (p->next) p->next->prev = p;			//Link up list
-        celllist[p->cellx][p->celly][p->cellz] = p;
-        p->prev = NULL;
-    }
+                // choice of particle
+                p = &(particles[i]);
+                
+                // definition of targetted radius and particle type
+                if (i >= (x1 + x2) * N - 0.00000001)
+                {
+                        p->rtarget = beta * (1.0f + random_gaussian() * PD);
+                        p->type = 2;
+                }
+                else if (i > x1 * N - 0.00000001)
+                {
+                        p->rtarget = alpha * (1.0f + random_gaussian() * PD);
+                        p->type = 1;
+                }
+                else
+                {
+                        p->rtarget = 1.0f + random_gaussian() * PD;
+                        p->type = 0;
+                }
+                
+                if (p->rtarget > maxrtarget)                    // identifies largest rtarget to scale it back to unity
+                        maxrtarget = p->rtarget;
+        }
+        printf("[grow] Target radius initialized. Max rtarget = %lf.\n", maxrtarget);
+
+        for (i = 0; i < N; i++)
+        {
+                // choice of particle
+                p = &(particles[i]);
+
+                p->rtarget = p->rtarget / maxrtarget;           // scales back wrt largest rtarget
+                p->rtarget *= 0.5;                              // scales to half so that max particle size is unity
+                printf("%lf\n", p->rtarget);
+                p->r = 0.5 * p->rtarget;                        // starts with half the targetted size
+                
+                // definition of particle mass (unity)
+                p->mass = 1;
+                
+
+                
+                // definition of particle index
+                p->number = i;
+                
+                p->vr = growthspeed * p->r;                
+                
+                double mt = (p->rtarget - p->r) / p->vr;
+                if (mt < 0) 
+                        printf("Particles should not exceed size 1!\n");
+                
+                if (maxt < 0 || maxt > mt)
+                        maxt = mt;
+                do
+                {
+                    p->x = genrand_real2() * xsize;			//Random location and speed
+                    p->y = genrand_real2() * ysize;
+                    p->z = genrand_real2() * zsize;
+                    p->cellx = p->x / cxsize;				//Find particle's cell
+                    p->celly = p->y / cysize;
+                    p->cellz = p->z / czsize;
+                } while (overlaplist(p, 0));
+                double sqm = 1.0 / sqrt(p->mass);
+                p->xn = p->x; p->yn = p->y; p->zn = p->z;
+                p->vx = (genrand_real2() - 0.5) / sqm;
+                p->vy = (genrand_real2() - 0.5) / sqm;
+                p->vz = (genrand_real2() - 0.5) / sqm;
+                p->t = 0;						//r and v known at t=0
+                p->next = celllist[p->cellx][p->celly][p->cellz];	//Add particle to celllist
+                if (p->next) p->next->prev = p;			//Link up list
+                celllist[p->cellx][p->celly][p->cellz] = p;
+                p->prev = NULL;
+        }
 }
 
 
@@ -459,6 +537,7 @@ void step()
         writelast();
         printf("Time is up!\n");
         stop = 1;
+        return;
     }
 
     if (ev->type == 100)
@@ -1341,8 +1420,8 @@ void writelast()
     int i;
     particle* p;
     FILE* file;
-    char filename[200];
-    sprintf(filename, "last.sph");
+    //char filename[200];
+    //sprintf(filename, "last.sph");
     file = fopen(filename, "w");
     fprintf(file, "%d\n%lf %lf %lf\n", (int)N, xsize, ysize, zsize);
     for (i = 0; i < N; i++)
@@ -1353,6 +1432,14 @@ void writelast()
     fclose(file);
 }
 
+
+/**************************************************
+**               RANDOM_GAUSSIAN
+** Generates independent standard normal
+** pseudo-random variables using the Marsaglia
+** polar method. u1 and u2 are normally distributed
+** with expectation 0 and standard deviation 1
+**************************************************/
 double random_gaussian()
 {
     static int have_deviate = 0;
