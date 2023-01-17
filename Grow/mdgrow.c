@@ -28,19 +28,19 @@
 #define N 2000
 
 
-double targetpackfrac = 0.00f;   //Target packing fraction (if too high, simulation will not finish or crash)  
-double composition1 = 0.0f;      //Fraction of large particles
-double composition2 = 0.0f;      //Fraction of intermediate particles (must be <= 1 - composition1, < for ternary systems)
-double sizeratio2 = 0.0f;     //intermediate diameter / large diameter (must be <= 1)
-double sizeratio3 = 0.0f;     //small diameter / large diameter (must be <= sizeratio2)
-double PD = 0.04f;               // Choice of polydispersity parameter
-double growthspeed = 0.01;       //Factor determining growth speed (slower growth means higher packing fractions can be reached)
-double thermostatinterval = 0.001;  //Time between applications of thermostat, which gets rid of excess heat generated while growing
+double targetpackfrac = 0.00f;  //Target packing fraction (if too high, simulation will not finish or crash)  
+double composition1 = 0.0f;     //Fraction of large particles
+double composition2 = 0.0f;     //Fraction of intermediate particles (must be <= 1 - composition1, < for ternary systems)
+double sizeratio2 = 0.0f;       //intermediate diameter / large diameter (must be <= 1)
+double sizeratio3 = 0.0f;       //small diameter / large diameter (must be <= sizeratio2)
+double PD = 0.04f;              // Choice of polydispersity parameter
+double growthspeed = 0.1;       //Factor determining growth speed (slower growth means higher packing fractions can be reached)
+double thermostatinterval = 0.001;      //Time between applications of thermostat, which gets rid of excess heat generated while growing
 char filename[200];             //Name of output file
 
-int makesnapshots = 0;        //Whether to make snapshots during the run (yes = 1, no = 0)
-double writeinterval = 1;     //Time between output to screen / data file
-double snapshotinterval = 1;  //Time between snapshots (should be a multiple of writeinterval)
+int makesnapshots = 0;          //Whether to make snapshots during the run (yes = 1, no = 0)
+double writeinterval = 1;       //Time between output to screen / data file
+double snapshotinterval = 1;    //Time between snapshots (should be a multiple of writeinterval)
 
 
 //Variables related to the event queueing system. These can affect efficiency.
@@ -134,7 +134,6 @@ void parametrization(int argc, char *argv[])
 
         // INPUT
         targetpackfrac = strtod(argv[1], NULL);
-        printf("%lf\n", targetpackfrac);
         double s = strtod(argv[2], NULL);
         sizeratio2 = 1.0f - s;
         sizeratio3 = sizeratio2 * sizeratio2;
@@ -142,7 +141,7 @@ void parametrization(int argc, char *argv[])
         composition2 = strtod(argv[4], NULL);
 
         // CHECK
-        printf("N = %d, PF = %lf, sigma2 = %lf, sigma3 = %lf, x1 = %lf, x2 = %lf, x3 = %lf\n", N, targetpackfrac, sizeratio2, sizeratio3, composition1, composition2, 1-composition1-composition2);
+        printf("N = %d, PF = %lf, sigma2 = %lf, sigma3 = %lf, PD = %lf, x1 = %lf, x2 = %lf, x3 = %lf\n", N, targetpackfrac, sizeratio2, sizeratio3, PD, composition1, composition2, 1-composition1-composition2);
 
         // OUTPUT
         if (sprintf(filename, "./init_configs/init_N%d_PF_%.2lf_s%.3lf_xA%.2lf_xB%.2lf.sph", N, targetpackfrac, s, composition1, composition2) < 0)
@@ -213,9 +212,7 @@ void init()
         p->t = 0;
     }
 
-    printf("[grow] Started placing particles.\n");
     randomparticles();
-    printf("[grow] Done placing particles.\n");
     randommovement();
     hx = 0.5 * xsize; hy = 0.5 * ysize; hz = 0.5 * zsize;	//Values used for periodic boundary conditions
 
@@ -274,29 +271,19 @@ void randomparticles()
         double x2 = composition2;
         double alpha = sizeratio2;
         double beta = sizeratio3;
-        double vol = N * M_PI / 6 * (x1 + x2 * alpha * alpha * alpha + (1 - x1 -x2) * beta * beta *beta) / targetpackfrac;
+        double vol;
         double maxrtarget = -1.0f;
-        
-        printf("Volume: %lf\n", vol);
-        
-        xsize = cbrt(vol);
-        ysize = xsize;
-        zsize = ysize;
-        initcelllist();
+        double sumsigma3 = 0.0f; 
         int i;
         particle* p;
-        for (i = 0; i < N; i++)				//First put particles at zero
+
+        // Put particle at 0, assign targeted radius and type
+        for (i = 0; i < N; i++)                 
         {
-                particles[i].x = 0; particles[i].y = 0; particles[i].z = 0;
-        }
-        
-        // loops over all N particles
-        for (i = 0; i < N; i++)
-        {
-                // choice of particle
                 p = &(particles[i]);
+
+                p->x = 0; p->y = 0; p->z = 0;
                 
-                // definition of targetted radius and particle type
                 if (i >= (x1 + x2) * N - 0.00000001)
                 {
                         p->rtarget = beta * (1.0f + random_gaussian() * PD);
@@ -313,31 +300,41 @@ void randomparticles()
                         p->type = 0;
                 }
                 
-                if (p->rtarget > maxrtarget)                    // identifies largest rtarget to scale it back to unity
+                // Identify largest rtarget
+                if (p->rtarget > maxrtarget)
                         maxrtarget = p->rtarget;
         }
-        printf("[grow] Target radius initialized. Max rtarget = %lf.\n", maxrtarget);
 
+        // Calculate box volume
         for (i = 0; i < N; i++)
         {
-                // choice of particle
                 p = &(particles[i]);
-
-                p->rtarget = p->rtarget / maxrtarget;           // scales back wrt largest rtarget
-                p->rtarget *= 0.5;                              // scales to half so that max particle size is unity
-                printf("%lf\n", p->rtarget);
-                p->r = 0.5 * p->rtarget;                        // starts with half the targetted size
                 
-                // definition of particle mass (unity)
+                // Normalizes wrt largest rtarget
+                p->rtarget = p->rtarget / maxrtarget;
+                
+                // Calculate sum of squared radii
+                sumsigma3 += p->rtarget * p->rtarget * p->rtarget;
+
+                // Halve radii so max particle size is unity
+                p->rtarget *= 0.5;                              
+                
+                // Starts with half the targeted size
+                p->r = 0.5 * p->rtarget;
+        }
+        vol = M_PI / 6.0f / targetpackfrac * sumsigma3;
+        printf("Volume: %lf\n", vol);
+        xsize = cbrt(vol);
+        ysize = xsize;
+        zsize = ysize;
+        initcelllist();
+        
+        for (i = 0; i < N; i++)
+        {
+                p = &(particles[i]);
                 p->mass = 1;
-                
-
-                
-                // definition of particle index
                 p->number = i;
-                
                 p->vr = growthspeed * p->r;                
-                
                 double mt = (p->rtarget - p->r) / p->vr;
                 if (mt < 0) 
                         printf("Particles should not exceed size 1!\n");
@@ -346,11 +343,11 @@ void randomparticles()
                         maxt = mt;
                 do
                 {
-                    p->x = genrand_real2() * xsize;			//Random location and speed
+                    p->x = genrand_real2() * xsize;     //Random location and speed
                     p->y = genrand_real2() * ysize;
                     p->z = genrand_real2() * zsize;
-                    p->cellx = p->x / cxsize;				//Find particle's cell
-                    p->celly = p->y / cysize;
+                    p->cellx = p->x / cxsize;		//Find particle's cell
+                    p->celly = p->y / cysize;           // CL might be ill defined due to volume definition
                     p->cellz = p->z / czsize;
                 } while (overlaplist(p, 0));
                 double sqm = 1.0 / sqrt(p->mass);
@@ -358,9 +355,9 @@ void randomparticles()
                 p->vx = (genrand_real2() - 0.5) / sqm;
                 p->vy = (genrand_real2() - 0.5) / sqm;
                 p->vz = (genrand_real2() - 0.5) / sqm;
-                p->t = 0;						//r and v known at t=0
+                p->t = 0;			                        //r and v known at t=0
                 p->next = celllist[p->cellx][p->celly][p->cellz];	//Add particle to celllist
-                if (p->next) p->next->prev = p;			//Link up list
+                if (p->next) p->next->prev = p;			        //Link up list
                 celllist[p->cellx][p->celly][p->cellz] = p;
                 p->prev = NULL;
         }
@@ -381,7 +378,6 @@ void randommovement()
     {
         p = particles + i;
         double imsq = 1.0 / sqrt(p->mass);
-
         p->vx = imsq * random_gaussian();
         p->vy = imsq * random_gaussian();
         p->vz = imsq * random_gaussian();
@@ -390,7 +386,6 @@ void randommovement()
         vztot += p->mass * p->vz;
         mtot += p->mass;
     }
-
 
     vxtot /= mtot; vytot /= mtot; vztot /= mtot;
     for (i = 0; i < N; i++)
@@ -1241,7 +1236,7 @@ int overlaplist(particle* part, int error)
                         rm = p->r + part->r;
                         if (r2 < rm * rm - dl)
                         {
-                            //            printf ("Overlap: %lf, %d, %d\n", r2, part->number, p->number);
+                            //printf ("Overlap: %lf, %d, %d\n", r2, part->number, p->number);
                             return 1;
                         }
                     }
@@ -1400,7 +1395,7 @@ void thermostat(event* ev)
             p = particles + num;
             double imsq = 1.0 / sqrt(p->mass);
             update(p);
-            p->vx = random_gaussian() * imsq;			//Kick it
+            p->vx = random_gaussian() * imsq;		//Kick it
             p->vy = random_gaussian() * imsq;
             p->vz = random_gaussian() * imsq;
             p->counter++;
@@ -1435,7 +1430,7 @@ void writelast()
 
 /**************************************************
 **               RANDOM_GAUSSIAN
-** Generates independent standard normal
+** Generates a pair of independent standard normal
 ** pseudo-random variables using the Marsaglia
 ** polar method. u1 and u2 are normally distributed
 ** with expectation 0 and standard deviation 1
